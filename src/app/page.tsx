@@ -4,16 +4,27 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Copy, Link } from "lucide-react"
+import { Copy, Link, Lock } from "lucide-react"
 import { generateToken } from "@/lib/actions"
 import { useToast } from "@/hooks/use-toast"
+import { AuthForm } from "@/components/auth-form"
 
 export default function Home() {
   const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
   const { toast } = useToast()
 
   const handleGenerateToken = async () => {
+    if (!isAuthenticated) {
+      toast({
+        title: "Authentication Required",
+        description: "Please authenticate before generating a token",
+        variant: "destructive",
+      })
+      return
+    }
+
     setLoading(true)
     try {
       const newToken = await generateToken()
@@ -49,7 +60,15 @@ export default function Home() {
           <CardDescription>Generate a one-time use token for secure file uploads</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {token ? (
+          {!isAuthenticated ? (
+            <div className="space-y-4">
+              <div className="text-center py-2">
+                <Lock className="h-10 w-10 text-gray-400 mx-auto mb-4" />
+                <p className="text-sm text-muted-foreground">Authentication required</p>
+              </div>
+              <AuthForm onAuthenticated={() => setIsAuthenticated(true)} />
+            </div>
+          ) : token ? (
             <div className="space-y-2">
               <p className="text-sm font-medium">Your one-time upload link:</p>
               <div className="flex items-center gap-2">
@@ -71,9 +90,11 @@ export default function Home() {
           )}
         </CardContent>
         <CardFooter>
-          <Button className="w-full" onClick={handleGenerateToken} disabled={loading}>
-            {loading ? "Generating..." : token ? "Generate New Token" : "Generate Token"}
-          </Button>
+          {isAuthenticated && (
+            <Button className="w-full" onClick={handleGenerateToken} disabled={loading}>
+              {loading ? "Generating..." : token ? "Generate New Token" : "Generate Token"}
+            </Button>
+          )}
         </CardFooter>
       </Card>
     </main>
