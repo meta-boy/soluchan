@@ -4,8 +4,7 @@ import { nanoid } from "nanoid"
 import { revalidatePath } from "next/cache"
 import { connectToDatabase } from "./mongodb"
 
-// Update the generateToken function to include expiration time:
-
+// Generate token function remains unchanged
 export async function generateToken() {
   try {
     const db = await connectToDatabase()
@@ -30,8 +29,7 @@ export async function generateToken() {
   }
 }
 
-// Update the validateToken function to check for token expiration:
-
+// Validate token function remains unchanged
 export async function validateToken(token: string) {
   try {
     const db = await connectToDatabase()
@@ -60,12 +58,16 @@ export async function validateToken(token: string) {
   }
 }
 
-// Update the uploadFiles function to better handle file processing:
+// Helper function to organize files into their folder structure
+interface FileWithPath extends File {
+  path?: string;
+}
 
+// Updated upload function to better handle folder structure
 export async function uploadFiles(formData: FormData) {
   try {
     const token = formData.get("token") as string
-    const files = formData.getAll("files") as File[]
+    const files = formData.getAll("files") as FileWithPath[]
 
     if (!token || !files.length) {
       throw new Error("Missing token or files")
@@ -79,8 +81,58 @@ export async function uploadFiles(formData: FormData) {
       throw new Error("Invalid or already used token")
     }
 
-    // Create a gist with the files
-    const gistUrl = await createGist(files)
+    // Process files to identify folder structure
+    const filesByPath = new Map<string, File[]>();
+    
+    // Detect if we have folder structure by checking if any files have path information
+    const hasFolderStructure = files.some(file => {
+      // Check for path property (added by our folder upload component)
+      if ((file as any).path) return true;
+      
+      // Check if the filename contains path separators
+      return file.name.includes('/') || file.name.includes('\\');
+    });
+
+    if (hasFolderStructure) {
+      // Group files by their path for folder structure
+      files.forEach(file => {
+        let filePath = "";
+        let fileName = file.name;
+        
+        // Check for path property first (from our enhanced uploader)
+        if ((file as any).path) {
+          filePath = (file as any).path;
+        } 
+        // Otherwise try to parse path from filename
+        else if (file.name.includes('/')) {
+          const parts = file.name.split('/');
+          fileName = parts.pop() || "";
+          filePath = parts.join('/');
+        } else if (file.name.includes('\\')) {
+          const parts = file.name.split('\\');
+          fileName = parts.pop() || "";
+          filePath = parts.join('\\');
+        }
+        
+        if (!filesByPath.has(filePath)) {
+          filesByPath.set(filePath, []);
+        }
+        
+        // Create a new file with just the filename
+        const newFile = new File([file], fileName, {
+          type: file.type,
+          lastModified: file.lastModified
+        });
+        
+        filesByPath.get(filePath)?.push(newFile);
+      });
+    } else {
+      // No folder structure, just add all files to the root
+      filesByPath.set("", files);
+    }
+
+    // Create the gist with the processed files
+    const gistUrl = await createGist(filesByPath, hasFolderStructure);
 
     // Update the token in MongoDB to mark it as used
     await db.collection("tokens").updateOne(
@@ -92,6 +144,7 @@ export async function uploadFiles(formData: FormData) {
           usedAt: new Date(),
           fileCount: files.length,
           fileNames: files.map((f) => f.name),
+          containsFolders: hasFolderStructure
         },
       },
     )
@@ -105,9 +158,8 @@ export async function uploadFiles(formData: FormData) {
   }
 }
 
-// Replace the placeholder createGist function with this implementation:
-
-async function createGist(files: File[]) {
+// Updated createGist function to properly handle folder structure
+async function createGist(filesByPath: Map<string, File[]>, hasFolderStructure: boolean) {
   try {
     // GitHub API requires a personal access token
     const githubToken = process.env.GITHUB_TOKEN
@@ -118,25 +170,62 @@ async function createGist(files: File[]) {
 
     // Prepare the files for the GitHub Gist API
     const gistFiles: Record<string, { content: string }> = {}
+    
+    // Track filenames to handle duplicates
+    const fileNameCounts: Record<string, number> = {}
 
-    // Process each file
-    for (const file of files) {
-      // Convert file to text content
-      const arrayBuffer = await file.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
+    // Process files by their paths
+    for (const [path, pathFiles] of Array.from(filesByPath.entries())) {
+      for (const file of pathFiles) {
+        // Convert file to text content
+        const arrayBuffer = await file.arrayBuffer()
+        const buffer = Buffer.from(arrayBuffer)
 
-      // For text files, convert to string
-      // For binary files, you might want to use base64 encoding
-      // This is a simple implementation that works for text files
-      let content = ""
-      try {
-        content = buffer.toString("utf-8")
-      } catch (e) {
-        // If conversion fails, use base64
-        content = `Binary file: ${buffer.toString("base64").substring(0, 100)}...`
+        // Create the file path for the gist
+        let gistFileName = file.name;
+        
+        // If we have a path and it's not empty, prepend it to create a folder-like structure
+        if (path && path.length > 0) {
+          // Replace backslashes with forward slashes for consistency
+          const normalizedPath = path.replace(/\\/g, '/');
+          // Use a slash in the filename to indicate directory structure in Gist
+          gistFileName = `${normalizedPath}/${file.name}`;
+        }
+        
+        // Handle duplicate filenames
+        if (gistFiles[gistFileName]) {
+          // Initialize counter if this is the first duplicate
+          if (!fileNameCounts[gistFileName]) {
+            fileNameCounts[gistFileName] = 1;
+          }
+          
+          // Increment counter and append to filename
+          fileNameCounts[gistFileName]++;
+          
+          // Split filename and extension to insert the counter before the extension
+          const lastDotIndex = gistFileName.lastIndexOf('.');
+          if (lastDotIndex !== -1) {
+            const name = gistFileName.substring(0, lastDotIndex);
+            const extension = gistFileName.substring(lastDotIndex);
+            gistFileName = `${name} (${fileNameCounts[gistFileName]})${extension}`;
+          } else {
+            // No extension, just append the counter
+            gistFileName = `${gistFileName} (${fileNameCounts[gistFileName]})`;
+          }
+        }
+
+        // For text files, convert to string
+        // For binary files, you might want to use base64 encoding
+        let content = "";
+        try {
+          content = buffer.toString("utf-8");
+        } catch (e) {
+          // If conversion fails, use base64 with a note
+          content = `Binary file: ${buffer.toString("base64").substring(0, 100)}...`;
+        }
+
+        gistFiles[gistFileName] = { content };
       }
-
-      gistFiles[file.name] = { content }
     }
 
     // Create the gist via GitHub API
@@ -148,7 +237,9 @@ async function createGist(files: File[]) {
         Accept: "application/vnd.github.v3+json",
       },
       body: JSON.stringify({
-        description: "Uploaded via One-Time Gist Uploader",
+        description: hasFolderStructure 
+          ? "Uploaded via One-Time Gist Uploader (with folder structure)" 
+          : "Uploaded via One-Time Gist Uploader",
         public: false, // Create a secret gist
         files: gistFiles,
       }),

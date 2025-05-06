@@ -7,16 +7,19 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Upload, AlertTriangle, Check } from "lucide-react"
+import { Upload, AlertTriangle, Check, Folder } from "lucide-react"
 import { validateToken, uploadFiles } from "@/lib/actions"
 import { useToast } from "@/hooks/use-toast"
+import { FolderUpload } from "@/components/folder-upload"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { FileDisplay } from "@/components/file-display"
 
 export default function UploadPage({ params }: { params: { token: string } }) {
   const [isValid, setIsValid] = useState<boolean | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [isSuccess, setIsSuccess] = useState(false)
   const [gistUrl, setGistUrl] = useState<string | null>(null)
-  const [files, setFiles] = useState<FileList | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const router = useRouter()
   const { toast } = useToast()
 
@@ -47,8 +50,18 @@ export default function UploadPage({ params }: { params: { token: string } }) {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFiles(e.target.files)
+      setFiles(Array.from(e.target.files))
     }
+  }
+
+  const handleFolderFiles = (folderFiles: File[]) => {
+    setFiles(folderFiles)
+    
+    // Show a toast to confirm files were selected
+    toast({
+      title: "Folder Selected",
+      description: `${folderFiles.length} files found in folder`,
+    })
   }
 
   const handleUpload = async () => {
@@ -135,25 +148,38 @@ export default function UploadPage({ params }: { params: { token: string } }) {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                <Upload className="h-8 w-8 text-gray-400 mx-auto mb-4" />
-                <p className="text-sm text-gray-600 mb-2">Select files or drag and drop</p>
-                <input type="file" id="file-upload" multiple className="hidden" onChange={handleFileChange} />
-                <Button variant="outline" onClick={() => document.getElementById("file-upload")?.click()}>
-                  Select Files
-                </Button>
-              </div>
+              <Tabs defaultValue="files" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="files">
+                    <Upload className="h-4 w-4 mr-2" />
+                    Files
+                  </TabsTrigger>
+                  <TabsTrigger value="folder">
+                    <Folder className="h-4 w-4 mr-2" />
+                    Folder
+                  </TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="files" className="mt-4">
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                    <Upload className="h-8 w-8 text-gray-400 mx-auto mb-4" />
+                    <p className="text-sm text-gray-600 mb-2">Select files or drag and drop</p>
+                    <input type="file" id="file-upload" multiple className="hidden" onChange={handleFileChange} />
+                    <Button variant="outline" onClick={() => document.getElementById("file-upload")?.click()}>
+                      Select Files
+                    </Button>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="folder" className="mt-4">
+                  <FolderUpload onFilesSelected={handleFolderFiles} />
+                </TabsContent>
+              </Tabs>
 
               {files && files.length > 0 && (
                 <div className="mt-4">
-                  <p className="text-sm font-medium mb-2">Selected Files:</p>
-                  <ul className="text-sm space-y-1">
-                    {Array.from(files).map((file, index) => (
-                      <li key={index} className="truncate">
-                        {file.name} ({(file.size / 1024).toFixed(1)} KB)
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="text-sm font-medium mb-2">Selected Files: {files.length}</p>
+                  <FileDisplay files={files} />
                 </div>
               )}
             </div>
